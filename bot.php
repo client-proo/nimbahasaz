@@ -1,25 +1,24 @@
 <?php
-require_once 'vendor/autoload.php';
+require_once __DIR__ . '/vendor/autoload.php';
 
 use TelegramBot\Api\BotApi;
 use TelegramBot\Api\Types\Inline\InlineKeyboardMarkup;
-use TelegramBot\Api\Types\Message;
-use TelegramBot\Api\Types\Update;
 use TelegramBot\Api\Client;
 
 // =========================
-// توکن ربات تلگرام
+// تنظیمات
 // =========================
-define('TOKEN', '8367127956:AAHAR6zf2m4_hNJOw4cesM_3ExsNacvWxUU');
+$token = getenv('BOT_TOKEN') ?: '8367127956:AAHAR6zf2m4_hNJOw4cesM_3ExsNacvWxUU';
+define('TOKEN', $token);
 define('ANTI_SPAM_TIME', 120);
 
 // =========================
-// دیتابیس‌های داخلی ربات
+// دیتابیس‌ها
 // =========================
-$FILE_DB = [];      // نگهداری اطلاعات فایل‌ها
-$USER_ACCESS = [];  // محدود کردن دریافت تکراری فایل
-$SENT_FILES = [];   // جلوگیری از ارسال فایل تکراری برای هر کاربر
-$LAST_SEND = [];    // زمان آخرین ارسال فایل (آنتی اسپم)
+$FILE_DB = [];
+$USER_ACCESS = [];
+$SENT_FILES = [];
+$LAST_SEND = [];
 
 // =========================
 // توابع کمکی
@@ -43,24 +42,20 @@ function format_remaining($seconds) {
 }
 
 function to_shamsi($timestamp) {
-    $date = new DateTime();
-    $date->setTimestamp($timestamp);
-    $persian_date = new \Morilog\Jalali\Jalalian::fromDateTime($date);
-    return $persian_date->toString('Y/m/d - H:i:s');
+    try {
+        $date = new DateTime();
+        $date->setTimestamp($timestamp);
+        $persian_date = \Morilog\Jalali\Jalalian::fromDateTime($date);
+        return $persian_date->toString('Y/m/d - H:i:s');
+    } catch (Exception $e) {
+        return date('Y/m/d - H:i:s', $timestamp);
+    }
 }
 
 function generate_code() {
-    $characters = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    $code = '';
-    for ($i = 0; $i < 20; $i++) {
-        $code .= $characters[rand(0, strlen($characters) - 1)];
-    }
-    return $code;
+    return substr(md5(uniqid() . rand(1000, 9999)), 0, 20);
 }
 
-// =========================
-// پاکسازی خودکار فایل‌های منقضی شده
-// =========================
 function auto_cleanup($bot) {
     global $FILE_DB, $USER_ACCESS, $SENT_FILES, $LAST_SEND;
     
@@ -76,19 +71,16 @@ function auto_cleanup($bot) {
     foreach ($expired as $code) {
         $data = $FILE_DB[$code];
         
-        // حذف پیام اصلی فایل
         try {
             $bot->deleteMessage($data['chat_id'], $data['msg_id']);
         } catch (Exception $e) {}
         
-        // حذف پیام‌های اطلاعاتی ارسال شده به کاربر
         foreach ($data['sent'] as $sent_msg) {
             try {
                 $bot->deleteMessage($sent_msg['chat_id'], $sent_msg['msg_id']);
             } catch (Exception $e) {}
         }
         
-        // ارسال پیام هشدار به کاربر درباره انقضا فایل
         try {
             $bot->sendMessage($data['chat_id'], "فایل شما منقضی شد. لطفاً دوباره ارسال کنید.");
         } catch (Exception $e) {}
@@ -96,14 +88,12 @@ function auto_cleanup($bot) {
         unset($USER_ACCESS[$code]);
         unset($FILE_DB[$code]);
         
-        // پاک کردن کد فایل از SENT_FILES
         foreach ($SENT_FILES as $user_id => &$files) {
             if (($key = array_search($code, $files)) !== false) {
                 unset($files[$key]);
             }
         }
         
-        // پاک کردن زمان آخرین ارسال اگر کاربر دیگر فایلی ندارد
         foreach ($LAST_SEND as $user_id => $last_time) {
             if (isset($SENT_FILES[$user_id]) && empty($SENT_FILES[$user_id])) {
                 unset($LAST_SEND[$user_id]);
@@ -113,14 +103,14 @@ function auto_cleanup($bot) {
 }
 
 // =========================
-// ایجاد نمونه ربات
+// ایجاد ربات
 // =========================
 $bot = new Client(TOKEN);
 
 // =========================
-// مدیریت کلیک روی دکمه دریافت فایل
+// مدیریت callback
 // =========================
-$bot->callbackQuery(function($callback) use (&$FILE_DB, &$USER_ACCESS) {
+$bot->callbackQuery(function($callback) use (&$FILE_DB, &$USER_ACCESS, $bot) {
     $code = $callback->getData();
     $user_id = $callback->getFrom()->getId();
     $message = $callback->getMessage();
@@ -132,13 +122,11 @@ $bot->callbackQuery(function($callback) use (&$FILE_DB, &$USER_ACCESS) {
     
     $data = $FILE_DB[$code];
     
-    // بررسی انقضای لینک
     if (time() > $data['expire']) {
         $bot->answerCallbackQuery($callback->getId(), "لینک منقضی شد!", true);
         return;
     }
     
-    // جلوگیری از دریافت چندباره فایل توسط یک کاربر در ۶ ساعت
     if (!isset($USER_ACCESS[$code])) {
         $USER_ACCESS[$code] = [];
     }
@@ -159,7 +147,6 @@ $bot->callbackQuery(function($callback) use (&$FILE_DB, &$USER_ACCESS) {
     $USER_ACCESS[$code][$user_id] = time();
     $remaining = format_remaining($data['expire'] - time());
     
-    // ارسال فایل بر اساس نوع آن
     try {
         switch ($data['ftype']) {
             case 'photo':
@@ -180,7 +167,6 @@ $bot->callbackQuery(function($callback) use (&$FILE_DB, &$USER_ACCESS) {
         return;
     }
     
-    // ارسال پیام اطلاعات انقضا
     $info = $bot->sendMessage($msg->getChat()->getId(), 
         "تاریخ انقضا:\n`" . to_shamsi($data['expire']) . "`\n" . $remaining, 
         "Markdown");
@@ -198,15 +184,15 @@ $bot->callbackQuery(function($callback) use (&$FILE_DB, &$USER_ACCESS) {
 });
 
 // =========================
-// دستور /start
+// دستور start
 // =========================
-$bot->command('start', function($message) use (&$FILE_DB) {
+$bot->command('start', function($message) use (&$FILE_DB, $bot) {
     $args = explode(' ', $message->getText());
     
     if (count($args) < 2 || !str_starts_with($args[1], 'file_')) {
         $bot->sendMessage($message->getChat()->getId(),
-            "LinkBolt Pro\n\nفایل بفرست → لینک ۶۰ ثانیه‌ای با دکمه شیشه‌ای\n" .
-            "همه می‌تونن بگیرن\nبعد ۱ دقیقه می‌سوزه!\n\nبفرست و کپی کن!",
+            "🤖 LinkBolt Pro\n\n📁 فایل بفرست → لینک ۶۰ ثانیه‌ای با دکمه شیشه‌ای\n" .
+            "⚡ همه می‌تونن بگیرن\n🔥 بعد ۱ دقیقه می‌سوزه!\n\n🔄 بفرست و کپی کن!",
             "Markdown", true);
         return;
     }
@@ -214,35 +200,33 @@ $bot->command('start', function($message) use (&$FILE_DB) {
     $code = substr($args[1], 5);
     
     if (!isset($FILE_DB[$code]) || time() > $FILE_DB[$code]['expire']) {
-        $bot->sendMessage($message->getChat()->getId(), "لینک منقضی شد!");
+        $bot->sendMessage($message->getChat()->getId(), "❌ لینک منقضی شد!");
         return;
     }
     
     $expire = $FILE_DB[$code]['expire'];
     $keyboard = new InlineKeyboardMarkup([
-        [['text' => 'دریافت فایل', 'callback_data' => $code]]
+        [['text' => '📥 دریافت فایل', 'callback_data' => $code]]
     ]);
     
     $bot->sendMessage($message->getChat()->getId(),
-        "لینک آماده است!\n\nتاریخ انقضا:\n`" . to_shamsi($expire) . "`\n" .
-        format_remaining($expire - time()) . " باقی مونده\n\nدکمه زیر رو بزن!",
+        "✅ لینک آماده است!\n\n📅 تاریخ انقضا:\n`" . to_shamsi($expire) . "`\n" .
+        format_remaining($expire - time()) . " باقی مونده\n\n🎯 دکمه زیر رو بزن!",
         "Markdown", false, null, $keyboard);
 });
 
 // =========================
-// مدیریت فایل‌های ارسالی توسط کاربر
+// مدیریت فایل‌ها
 // =========================
-$bot->on(function($update) use (&$FILE_DB, &$SENT_FILES, &$LAST_SEND) {
+$bot->on(function($update) use (&$FILE_DB, &$SENT_FILES, &$LAST_SEND, $bot) {
     $message = $update->getMessage();
     if (!$message) return;
     
     $user_id = $message->getFrom()->getId();
     $now = time();
     
-    // اجرای پاکسازی قبل از پردازش
     auto_cleanup($bot);
     
-    // بررسی آنتی اسپم
     if (isset($LAST_SEND[$user_id]) && ($now - $LAST_SEND[$user_id] < ANTI_SPAM_TIME)) {
         $remaining = ANTI_SPAM_TIME - ($now - $LAST_SEND[$user_id]);
         $m = floor($remaining / 60);
@@ -250,7 +234,7 @@ $bot->on(function($update) use (&$FILE_DB, &$SENT_FILES, &$LAST_SEND) {
         $countdown = $m ? "{$m} دقیقه و {$s} ثانیه" : "{$s} ثانیه";
         
         $bot->sendMessage($message->getChat()->getId(), 
-            "از اسپم کردن خودداری کنید!\nزمان باقی‌مانده تا ارسال بعدی: {$countdown}");
+            "⏰ از اسپم کردن خودداری کنید!\nزمان باقی‌مانده تا ارسال بعدی: {$countdown}");
         return;
     }
     
@@ -258,7 +242,6 @@ $bot->on(function($update) use (&$FILE_DB, &$SENT_FILES, &$LAST_SEND) {
     $ftype = null;
     $name = null;
     
-    // شناسایی نوع فایل
     if ($message->getPhoto()) {
         $photos = $message->getPhoto();
         $file_id = end($photos)->getFileId();
@@ -283,38 +266,34 @@ $bot->on(function($update) use (&$FILE_DB, &$SENT_FILES, &$LAST_SEND) {
         return;
     }
     
-    // بررسی فایل تکراری
     $active_files = $SENT_FILES[$user_id] ?? [];
     foreach ($FILE_DB as $code => $data) {
         if ($data['file_id'] === $file_id && in_array($code, $active_files)) {
-            $bot->sendMessage($message->getChat()->getId(), "فایل تکراری است.");
+            $bot->sendMessage($message->getChat()->getId(), "⚠️ فایل تکراری است.");
             return;
         }
     }
     
-    // تولید کد و لینک فایل
     $code = generate_code();
     $expire = $now + 60;
     $bot_username = $bot->getMe()->getUsername();
     $link = "https://t.me/{$bot_username}?start=file_{$code}";
     
     $keyboard = new InlineKeyboardMarkup([
-        [['text' => 'دریافت فایل', 'callback_data' => $code]]
+        [['text' => '📥 دریافت فایل', 'callback_data' => $code]]
     ]);
     
-    // ارسال پیام نهایی به کاربر
     $bot->sendMessage($message->getChat()->getId(),
-        "لینک ۶۰ ثانیه‌ای آماده شد!\n\n**نام:** `{$name}`\n**انقضا:** `" . to_shamsi($expire) . "`\n" .
-        format_remaining($expire - $now) . " باقی مونده\n\n`{$link}`\n\nکپی کن و بفرست!",
+        "🎉 لینک ۶۰ ثانیه‌ای آماده شد!\n\n📄 **نام:** `{$name}`\n⏰ **انقضا:** `" . to_shamsi($expire) . "`\n" .
+        format_remaining($expire - $now) . " باقی مونده\n\n🔗 `{$link}`\n\n📋 کپی کن و بفرست!",
         "Markdown", true, null, $keyboard);
     
-    // ثبت اطلاعات فایل در دیتابیس
     $FILE_DB[$code] = [
         'file_id' => $file_id,
         'expire' => $expire,
         'ftype' => $ftype,
         'chat_id' => $message->getChat()->getId(),
-        'msg_id' => $message->getMessageId() + 1, // Assuming next message
+        'msg_id' => $message->getMessageId() + 1,
         'sent' => []
     ];
     
@@ -334,10 +313,11 @@ $bot->on(function($update) use (&$FILE_DB, &$SENT_FILES, &$LAST_SEND) {
 // =========================
 // اجرای ربات
 // =========================
-echo "LinkBolt Pro روشن شد! | زمان هوشمند فعال | ضد اسپم فعال\n";
+echo "🚀 LinkBolt Pro روشن شد! | ⏰ زمان هوشمند فعال | 🛡️ ضد اسپم فعال\n";
 
 try {
     $bot->run();
 } catch (Exception $e) {
-    echo "Error: " . $e->getMessage() . "\n";
+    echo "❌ Error: " . $e->getMessage() . "\n";
+    sleep(10);
 }
