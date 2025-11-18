@@ -1,0 +1,6 @@
+{
+    "require": {
+        "telegram-bot/api": "^3.0",
+        "morilog/jalali": "^3.0"
+    }
+}
